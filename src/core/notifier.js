@@ -4,6 +4,7 @@ import { fileURLToPath } from 'url';
 import axios from 'axios';
 import nodemailer from 'nodemailer';
 import { getSmtpSettings } from './db.js';
+import { log } from './log.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -49,13 +50,19 @@ export function sendNotification(title, message, options = {}) {
 
 export async function sendEmail(subject, htmlBody, to = null) {
   const settings = getSmtpSettings();
-  if (!settings) return false;
+  if (!settings) {
+    log('notifier', `sendEmail skipped: SMTP not configured (subject: ${subject})`);
+    return false;
+  }
 
   const recipients = (to || settings.to || '')
     .split(',')
     .map(r => r.trim())
     .filter(Boolean);
-  if (recipients.length === 0) return false;
+  if (recipients.length === 0) {
+    log('notifier', `sendEmail skipped: no recipients (smtp_to='${to}', global to='${settings.to}') for "${subject}"`);
+    return false;
+  }
 
   try {
     const port = parseInt(settings.port, 10);
@@ -69,6 +76,10 @@ export async function sendEmail(subject, htmlBody, to = null) {
       }
     });
 
+    log(
+      'notifier',
+      `sendEmail: sending to "${recipients.join(', ')}" via ${settings.host}:${port} from ${settings.from || settings.user} — ${subject}`
+    );
     await transport.sendMail({
       from: settings.from || settings.user,
       to: recipients.join(', '),
@@ -76,9 +87,10 @@ export async function sendEmail(subject, htmlBody, to = null) {
       html: htmlBody
     });
 
+    log('notifier', `sendEmail: sent to "${recipients.join(', ')}" — ${subject}`);
     return true;
   } catch (error) {
-    console.error('Failed to send email:', error.message);
+    log('notifier', `sendEmail: FAILED for "${subject}" to "${recipients.join(', ')}": ${error.message}`);
     return false;
   }
 }
@@ -101,13 +113,14 @@ function buildEmailHtml(title, monitor, extra = '') {
 
 export async function notifyMonitorDown(monitor) {
   const displayName = monitor.name || monitor.url;
+  log('notifier', `notifyMonitorDown: ${displayName} (smtp_to='${monitor.smtp_to}')`);
   sendNotification('❌ Monitor Down', `${displayName} is not responding`, { sound: true });
 
   if (monitor.webhook_url) {
     sendWebhook(monitor.webhook_url, 'monitor_down', monitor);
   }
 
-  await sendEmail(
+  const sent = await sendEmail(
     `[UptimeKit] Monitor Down — ${displayName}`,
     buildEmailHtml(
       '❌ Monitor Down',
@@ -116,17 +129,19 @@ export async function notifyMonitorDown(monitor) {
     ),
     monitor.smtp_to
   );
+  log('notifier', `notifyMonitorDown: email ${sent ? 'sent' : 'NOT sent'} for ${displayName}`);
 }
 
 export async function notifyMonitorUp(monitor) {
   const displayName = monitor.name || monitor.url;
+  log('notifier', `notifyMonitorUp: ${displayName} (smtp_to='${monitor.smtp_to}')`);
   sendNotification('✅ Monitor Back Up', `${displayName} is now responding`, { sound: true });
 
   if (monitor.webhook_url) {
     sendWebhook(monitor.webhook_url, 'monitor_up', monitor);
   }
 
-  await sendEmail(
+  const sent = await sendEmail(
     `[UptimeKit] Monitor Back Up — ${displayName}`,
     buildEmailHtml(
       '✅ Monitor Back Up',
@@ -135,6 +150,7 @@ export async function notifyMonitorUp(monitor) {
     ),
     monitor.smtp_to
   );
+  log('notifier', `notifyMonitorUp: email ${sent ? 'sent' : 'NOT sent'} for ${displayName}`);
 }
 
 export async function notifySSLExpiring(monitor, daysRemaining) {

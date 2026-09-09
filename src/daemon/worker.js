@@ -1,4 +1,5 @@
 import { initDB, getMonitors, logHeartbeat, getNotificationSettings, upsertSSLCertificate } from '../core/db.js';
+import { log } from '../core/log.js';
 import {
   notifyMonitorDown,
   notifyMonitorUp,
@@ -82,6 +83,7 @@ async function checkMonitor(monitor) {
       if (res.status >= 200 && res.status < 300) {
         status = 'up';
       }
+      monitor._lastHttpCode = res.status;
       latency = Date.now() - start;
     } else if (monitor.type === 'icmp') {
       const isWindows = process.platform === 'win32';
@@ -149,22 +151,32 @@ async function checkMonitor(monitor) {
 
   const notificationsEnabled = getNotificationSettings();
 
+  const notifySSLDown = monitor.type === 'ssl' && status === 'down' && !!previousStatus && previousStatus !== status;
+  const notifySSLUp = monitor.type === 'ssl' && status === 'up' && !!previousStatus && previousStatus !== status;
+  const notifyDown =
+    monitor.type !== 'ssl' && status === 'down' && (monitor.retries === 0 || retries === monitor.retries);
+  const notifyUp = monitor.type !== 'ssl' && status === 'up' && previousStatus === 'down';
+
+  log(
+    'check',
+    `monitor=${monitor.name || monitor.url} type=${monitor.type} status=${status} prev=${previousStatus ?? 'null'} ` +
+      `retries=${retries} retryLimit=${monitor.retries} httpCode=${monitor._lastHttpCode ?? '-'} ` +
+      `notifDisabled=${!notificationsEnabled} down=${notifyDown} up=${notifyUp} sslDown=${notifySSLDown} sslUp=${notifySSLUp}`
+  );
+
   if (notificationsEnabled) {
     if (monitor.type === 'ssl') {
-      // SSL-specific notifications
-      if (previousStatus && previousStatus !== status) {
-        if (status === 'down') {
-          notifySSLExpired(monitor);
-        } else if (status === 'up') {
-          notifySSLValid(monitor);
-        }
+      if (notifySSLDown) {
+        notifySSLExpired(monitor);
+      } else if (notifySSLUp) {
+        notifySSLValid(monitor);
       }
     } else {
-      if (status === 'down' && previousStatus !== 'down' && (monitor.retries === 0 || retries >= monitor.retries)) {
+      if (notifyDown) {
         notifyMonitorDown(monitor);
       }
 
-      if (status === 'up' && previousStatus === 'down') {
+      if (notifyUp) {
         notifyMonitorUp(monitor);
       }
     }
@@ -233,6 +245,12 @@ function monitorChanged(a, b) {
   );
 }
 
+function changedFields(a, b) {
+  return ['interval', 'url', 'type', 'retries', 'name', 'webhook_url', 'smtp_to', 'group_name'].filter(
+    k => a[k] !== b[k]
+  );
+}
+
 async function refreshMonitors() {
   try {
     const monitors = getMonitors();
@@ -243,6 +261,7 @@ async function refreshMonitors() {
       if (!currentIds.has(id)) {
         clearInterval(data.intervalId);
         activeMonitors.delete(id);
+        log('refresh', `removed monitor id=${id}`);
       }
     }
 
@@ -250,11 +269,19 @@ async function refreshMonitors() {
     for (const monitor of monitors) {
       if (!activeMonitors.has(monitor.id)) {
         startMonitorLoop(monitor);
+        log(
+          'refresh',
+          `added monitor id=${monitor.id} name=${monitor.name || monitor.url} type=${monitor.type} interval=${monitor.interval} retries=${monitor.retries}`
+        );
       } else {
         const current = activeMonitors.get(monitor.id);
         if (monitorChanged(current.monitor, monitor)) {
           clearInterval(current.intervalId);
           startMonitorLoop(monitor, current.lastStatus);
+          log(
+            'refresh',
+            `restarted monitor id=${monitor.id} name=${monitor.name || monitor.url} changed=[${changedFields(current.monitor, monitor).join(',')}]`
+          );
         }
       }
     }
@@ -265,6 +292,7 @@ async function refreshMonitors() {
 
 async function start() {
   await initDB();
+  log('daemon', 'worker started, monitoring...');
   console.log('Daemon started. Monitoring...');
 
   refreshMonitors();
