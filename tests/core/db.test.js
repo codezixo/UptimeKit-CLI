@@ -32,6 +32,7 @@ beforeAll(async () => {
       port INTEGER,
       interval INTEGER NOT NULL,
       webhook_url TEXT,
+      smtp_to TEXT,
       group_name TEXT,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
@@ -72,7 +73,7 @@ beforeAll(async () => {
   db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('notifications_enabled', '1')").run();
 
   testFunctions = {
-    addMonitor: (type, url, interval, name = null, webhookUrl = null, groupName = null) => {
+    addMonitor: (type, url, interval, name = null, webhookUrl = null, groupName = null, smtpTo = null) => {
       if (name) {
         const existing = db.prepare('SELECT id FROM monitors WHERE lower(name) = lower(?)').get(name);
         if (existing) {
@@ -80,13 +81,13 @@ beforeAll(async () => {
         }
       }
       const stmt = db.prepare(
-        'INSERT INTO monitors (type, url, interval, name, webhook_url, group_name) VALUES (?, ?, ?, ?, ?, ?)'
+        'INSERT INTO monitors (type, url, interval, name, webhook_url, group_name, smtp_to) VALUES (?, ?, ?, ?, ?, ?, ?)'
       );
-      return stmt.run(type, url, interval, name, webhookUrl, groupName);
+      return stmt.run(type, url, interval, name, webhookUrl, groupName, smtpTo);
     },
 
     updateMonitor: (id, updates) => {
-      const { name, url, type, interval, webhook_url } = updates;
+      const { name, url, type, interval, webhook_url, smtp_to } = updates;
 
       if (name) {
         const existing = db.prepare('SELECT id FROM monitors WHERE lower(name) = lower(?) AND id != ?').get(name, id);
@@ -117,6 +118,10 @@ beforeAll(async () => {
       if (webhook_url !== undefined) {
         fields.push('webhook_url = ?');
         values.push(webhook_url);
+      }
+      if (smtp_to !== undefined) {
+        fields.push('smtp_to = ?');
+        values.push(smtp_to);
       }
 
       if (fields.length === 0) return;
@@ -180,6 +185,47 @@ beforeAll(async () => {
       const value = enabled ? '1' : '0';
       db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('notifications_enabled', ?)").run(value);
       return true;
+    },
+
+    getSmtpSettings: () => {
+      const rows = db.prepare("SELECT key, value FROM settings WHERE key LIKE 'smtp_%'").all();
+      const settings = {};
+      for (const row of rows) {
+        settings[row.key.replace('smtp_', '')] = row.value;
+      }
+      if (!settings.host || !settings.port || !settings.user || !settings.pass) {
+        return null;
+      }
+      return settings;
+    },
+
+    setSmtpSettings: config => {
+      const stmt = db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)');
+      stmt.run('smtp_host', config.host);
+      stmt.run('smtp_port', String(config.port));
+      stmt.run('smtp_user', config.user);
+      stmt.run('smtp_pass', config.pass);
+      stmt.run('smtp_from', config.from || config.user);
+      if (config.to) {
+        stmt.run('smtp_to', config.to);
+      } else {
+        db.prepare("DELETE FROM settings WHERE key = 'smtp_to'").run();
+      }
+      return true;
+    },
+
+    clearSmtpSettings: () => {
+      db.prepare("DELETE FROM settings WHERE key LIKE 'smtp_%'").run();
+      return true;
+    },
+
+    isSmtpConfigured: () => {
+      const settings = db.prepare("SELECT key, value FROM settings WHERE key LIKE 'smtp_%'").all();
+      const smtp = {};
+      for (const row of settings) {
+        smtp[row.key.replace('smtp_', '')] = row.value;
+      }
+      return !!(smtp.host && smtp.port && smtp.user && smtp.pass);
     },
 
     upsertSSLCertificate: (monitorId, certData) => {
@@ -411,6 +457,21 @@ describe('Database Module', () => {
       expect(monitor.webhook_url).toBe('https://webhook.com/hook');
     });
 
+    it('should update smtp_to recipients', () => {
+      testFunctions.updateMonitor(monitorId, { smtp_to: 'alice@example.com,bob@example.com' });
+
+      const monitor = testFunctions.getMonitorByIdOrName(String(monitorId));
+      expect(monitor.smtp_to).toBe('alice@example.com,bob@example.com');
+    });
+
+    it('should clear smtp_to when set to null', () => {
+      testFunctions.updateMonitor(monitorId, { smtp_to: 'alice@example.com' });
+      testFunctions.updateMonitor(monitorId, { smtp_to: null });
+
+      const monitor = testFunctions.getMonitorByIdOrName(String(monitorId));
+      expect(monitor.smtp_to).toBeNull();
+    });
+
     it('should update multiple fields at once', () => {
       testFunctions.updateMonitor(monitorId, {
         name: 'updated',
@@ -529,6 +590,89 @@ describe('Database Module', () => {
 
       const enabled = testFunctions.getNotificationSettings();
       expect(enabled).toBe(true);
+    });
+  });
+
+  describe('SMTP Settings', () => {
+    beforeEach(() => {
+      testFunctions.clearSmtpSettings();
+    });
+
+    it('should return null when SMTP is not configured', () => {
+      expect(testFunctions.getSmtpSettings()).toBeNull();
+    });
+
+    it('should store SMTP settings', () => {
+      testFunctions.setSmtpSettings({
+        host: 'smtp.gmail.com',
+        port: 587,
+        user: 'alerts@gmail.com',
+        pass: 'secret',
+        from: 'UptimeKit <alerts@gmail.com>',
+        to: 'alice@example.com,bob@example.com'
+      });
+
+      const settings = testFunctions.getSmtpSettings();
+      expect(settings.host).toBe('smtp.gmail.com');
+      expect(settings.port).toBe('587');
+      expect(settings.user).toBe('alerts@gmail.com');
+      expect(settings.pass).toBe('secret');
+      expect(settings.from).toBe('UptimeKit <alerts@gmail.com>');
+      expect(settings.to).toBe('alice@example.com,bob@example.com');
+    });
+
+    it('should store multiple recipients as a comma-separated string', () => {
+      testFunctions.setSmtpSettings({
+        host: 'smtp.gmail.com',
+        port: 587,
+        user: 'alerts@gmail.com',
+        pass: 'secret',
+        to: 'a@example.com,b@example.com,c@example.com'
+      });
+
+      const settings = testFunctions.getSmtpSettings();
+      expect(settings.to.split(',')).toHaveLength(3);
+    });
+
+    it('should default from to user when not provided', () => {
+      testFunctions.setSmtpSettings({
+        host: 'smtp.gmail.com',
+        port: 587,
+        user: 'alerts@gmail.com',
+        pass: 'secret'
+      });
+
+      const settings = testFunctions.getSmtpSettings();
+      expect(settings.from).toBe('alerts@gmail.com');
+    });
+
+    it('should return false for isSmtpConfigured when incomplete', () => {
+      expect(testFunctions.isSmtpConfigured()).toBe(false);
+    });
+
+    it('should return true for isSmtpConfigured when complete', () => {
+      testFunctions.setSmtpSettings({
+        host: 'smtp.gmail.com',
+        port: 587,
+        user: 'alerts@gmail.com',
+        pass: 'secret'
+      });
+
+      expect(testFunctions.isSmtpConfigured()).toBe(true);
+    });
+
+    it('should clear all SMTP settings', () => {
+      testFunctions.setSmtpSettings({
+        host: 'smtp.gmail.com',
+        port: 587,
+        user: 'alerts@gmail.com',
+        pass: 'secret'
+      });
+
+      testFunctions.clearSmtpSettings();
+
+      expect(testFunctions.getSmtpSettings()).toBeNull();
+      expect(testFunctions.isSmtpConfigured()).toBe(false);
     });
   });
 

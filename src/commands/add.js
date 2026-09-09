@@ -23,6 +23,7 @@ export function registerAddCommand(program) {
     .option('-r, --retries <number>', 'Check retries before notifications are send', '0')
     .option('-n, --name <name>', 'Custom name for monitor')
     .option('-w, --webhook <url>', 'Webhook URL for notifications')
+    .option('-s, --smtp-to <recipients>', 'Email recipient(s) for SMTP notifications (comma-separated)')
     .option('-g, --group <group>', 'Group name for organizing monitors (e.g., dev, prod, staging)')
     .action(async (url, options, cmd) => {
       try {
@@ -190,7 +191,16 @@ export function registerAddCommand(program) {
         }
 
         const groupName = options.group || null;
-        addMonitor(data.type, data.url, data.interval, data.retries ?? 0, name, options.webhook, groupName);
+        addMonitor(
+          data.type,
+          data.url,
+          data.interval,
+          data.retries ?? 0,
+          name,
+          options.webhook,
+          groupName,
+          options.smtpTo
+        );
 
         let successMsg = `Monitor added: ${name} (${data.url}, ${data.type})`;
 
@@ -200,6 +210,10 @@ export function registerAddCommand(program) {
 
         if (groupName) {
           successMsg += ` [Group: ${groupName}]`;
+        }
+
+        if (options.smtpTo) {
+          successMsg += ` [SMTP: ${options.smtpTo}]`;
         }
         console.log(chalk.green(successMsg));
       } catch (err) {

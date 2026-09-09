@@ -5,6 +5,14 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 
+jest.unstable_mockModule('nodemailer', () => ({
+  default: {
+    createTransport: jest.fn(() => ({
+      sendMail: jest.fn().mockResolvedValue({ accepted: ['test@example.com'] })
+    }))
+  }
+}));
+
 // Create in-memory test database
 let testDb;
 
@@ -93,12 +101,42 @@ jest.unstable_mockModule('../../src/core/db.js', () => {
         .prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('notifications_enabled', ?)")
         .run(enabled ? '1' : '0');
       return true;
+    }),
+    getSmtpSettings: jest.fn(() => {
+      const rows = testDb.prepare("SELECT key, value FROM settings WHERE key LIKE 'smtp_%'").all();
+      const settings = {};
+      for (const row of rows) {
+        settings[row.key.replace('smtp_', '')] = row.value;
+      }
+      if (!settings.host || !settings.port || !settings.user || !settings.pass) {
+        return null;
+      }
+      return settings;
+    }),
+    setSmtpSettings: jest.fn(config => {
+      const stmt = testDb.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)');
+      stmt.run('smtp_host', config.host);
+      stmt.run('smtp_port', String(config.port));
+      stmt.run('smtp_user', config.user);
+      stmt.run('smtp_pass', config.pass);
+      stmt.run('smtp_from', config.from || config.user);
+      if (config.to) {
+        stmt.run('smtp_to', config.to);
+      } else {
+        testDb.prepare("DELETE FROM settings WHERE key = 'smtp_to'").run();
+      }
+      return true;
+    }),
+    clearSmtpSettings: jest.fn(() => {
+      testDb.prepare("DELETE FROM settings WHERE key LIKE 'smtp_%'").run();
+      return true;
     })
   };
 });
 
 const { registerDeleteCommand } = await import('../../src/commands/delete.js');
 const { registerNotificationsCommand } = await import('../../src/commands/notifications.js');
+const nodemailer = (await import('nodemailer')).default;
 
 describe('Delete Command', () => {
   let program;
@@ -228,6 +266,118 @@ describe('Notifications Command', () => {
 
     const row = testDb.prepare("SELECT value FROM settings WHERE key = 'notifications_enabled'").get();
     expect(row.value).toBe('1');
+  });
+
+  it('should configure SMTP settings with flags', async () => {
+    await program.parseAsync([
+      'node',
+      'test',
+      'notifications',
+      'smtp',
+      '--host',
+      'smtp.gmail.com',
+      '--port',
+      '587',
+      '--user',
+      'alerts@gmail.com',
+      '--pass',
+      'secret',
+      '--to',
+      'alice@example.com,bob@example.com'
+    ]);
+
+    const host = testDb.prepare("SELECT value FROM settings WHERE key = 'smtp_host'").get();
+    expect(host.value).toBe('smtp.gmail.com');
+    const port = testDb.prepare("SELECT value FROM settings WHERE key = 'smtp_port'").get();
+    expect(port.value).toBe('587');
+    const to = testDb.prepare("SELECT value FROM settings WHERE key = 'smtp_to'").get();
+    expect(to.value).toBe('alice@example.com,bob@example.com');
+  });
+
+  it('should reject invalid SMTP port', async () => {
+    await program.parseAsync([
+      'node',
+      'test',
+      'notifications',
+      'smtp',
+      '--host',
+      'smtp.gmail.com',
+      '--port',
+      '99999',
+      '--user',
+      'alerts@gmail.com',
+      '--pass',
+      'secret'
+    ]);
+
+    expect(consoleLog.some(log => log.includes('Invalid SMTP port'))).toBe(true);
+    const host = testDb.prepare("SELECT value FROM settings WHERE key = 'smtp_host'").get();
+    expect(host).toBeUndefined();
+  });
+
+  it('should show SMTP status when not configured', async () => {
+    await program.parseAsync(['node', 'test', 'notifications', 'smtp', 'status']);
+
+    expect(consoleLog.some(log => log.includes('not configured'))).toBe(true);
+  });
+
+  it('should show SMTP status and mask password when configured', async () => {
+    testDb.prepare("INSERT INTO settings (key, value) VALUES ('smtp_host', 'smtp.gmail.com')").run();
+    testDb.prepare("INSERT INTO settings (key, value) VALUES ('smtp_port', '587')").run();
+    testDb.prepare("INSERT INTO settings (key, value) VALUES ('smtp_user', 'alerts@gmail.com')").run();
+    testDb.prepare("INSERT INTO settings (key, value) VALUES ('smtp_pass', 'supersecret')").run();
+    testDb.prepare("INSERT INTO settings (key, value) VALUES ('smtp_from', 'UptimeKit <alerts@gmail.com>')").run();
+    testDb.prepare("INSERT INTO settings (key, value) VALUES ('smtp_to', 'alice@example.com')").run();
+
+    await program.parseAsync(['node', 'test', 'notifications', 'smtp', 'status']);
+
+    expect(consoleLog.some(log => log.includes('smtp.gmail.com'))).toBe(true);
+    expect(consoleLog.some(log => log.includes('supersecret'))).toBe(false);
+  });
+
+  it('should send test email', async () => {
+    testDb.prepare("INSERT INTO settings (key, value) VALUES ('smtp_host', 'smtp.gmail.com')").run();
+    testDb.prepare("INSERT INTO settings (key, value) VALUES ('smtp_port', '587')").run();
+    testDb.prepare("INSERT INTO settings (key, value) VALUES ('smtp_user', 'alerts@gmail.com')").run();
+    testDb.prepare("INSERT INTO settings (key, value) VALUES ('smtp_pass', 'secret')").run();
+    testDb.prepare("INSERT INTO settings (key, value) VALUES ('smtp_to', 'alice@example.com')").run();
+
+    await program.parseAsync(['node', 'test', 'notifications', 'smtp', 'test']);
+
+    expect(consoleLog.some(log => log.includes('Test email sent'))).toBe(true);
+  });
+
+  it('should report failure when test email cannot be sent', async () => {
+    testDb.prepare("INSERT INTO settings (key, value) VALUES ('smtp_host', 'smtp.gmail.com')").run();
+    testDb.prepare("INSERT INTO settings (key, value) VALUES ('smtp_port', '587')").run();
+    testDb.prepare("INSERT INTO settings (key, value) VALUES ('smtp_user', 'alerts@gmail.com')").run();
+    testDb.prepare("INSERT INTO settings (key, value) VALUES ('smtp_pass', 'secret')").run();
+    testDb.prepare("INSERT INTO settings (key, value) VALUES ('smtp_to', 'alice@example.com')").run();
+
+    nodemailer.createTransport.mockImplementation(() => ({
+      sendMail: jest.fn().mockRejectedValue(new Error('SMTP down'))
+    }));
+
+    await program.parseAsync(['node', 'test', 'notifications', 'smtp', 'test']);
+
+    expect(consoleLog.some(log => log.includes('Failed to send test email'))).toBe(true);
+
+    nodemailer.createTransport.mockImplementation(() => ({
+      sendMail: jest.fn().mockResolvedValue({ accepted: ['test@example.com'] })
+    }));
+  });
+
+  it('should clear SMTP settings', async () => {
+    testDb.prepare("INSERT INTO settings (key, value) VALUES ('smtp_host', 'smtp.gmail.com')").run();
+    testDb.prepare("INSERT INTO settings (key, value) VALUES ('smtp_port', '587')").run();
+    testDb.prepare("INSERT INTO settings (key, value) VALUES ('smtp_user', 'alerts@gmail.com')").run();
+    testDb.prepare("INSERT INTO settings (key, value) VALUES ('smtp_pass', 'secret')").run();
+
+    await program.parseAsync(['node', 'test', 'notifications', 'smtp', 'clear']);
+
+    expect(consoleLog.some(log => log.includes('cleared'))).toBe(true);
+    const host = testDb.prepare("SELECT value FROM settings WHERE key = 'smtp_host'").get();
+    expect(host).toBeUndefined();
   });
 });
 

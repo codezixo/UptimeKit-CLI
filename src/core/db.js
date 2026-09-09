@@ -28,6 +28,7 @@ export async function initDB() {
       interval INTEGER NOT NULL,
       retries INTEGER DEFAULT 0,
       webhook_url TEXT,
+      smtp_to TEXT,
       group_name TEXT,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
@@ -79,6 +80,10 @@ export async function initDB() {
 
     if (!monitorCols.some(c => c.name === 'retries')) {
       db.prepare('ALTER TABLE monitors ADD COLUMN retries INTEGER DEFAULT 0').run();
+    }
+
+    if (!monitorCols.some(c => c.name === 'smtp_to')) {
+      db.prepare('ALTER TABLE monitors ADD COLUMN smtp_to TEXT').run();
     }
 
     const heartbeatCols = db.prepare("PRAGMA table_info('heartbeats')").all();
@@ -147,6 +152,7 @@ export function resetDB() {
       interval INTEGER NOT NULL,
       retries INTEGER DEFAULT 0,
       webhook_url TEXT,
+      smtp_to TEXT,
       group_name TEXT,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
@@ -182,7 +188,16 @@ export function resetDB() {
   `);
 }
 
-export function addMonitor(type, url, interval, retries = null, name = null, webhookUrl = null, groupName = null) {
+export function addMonitor(
+  type,
+  url,
+  interval,
+  retries = null,
+  name = null,
+  webhookUrl = null,
+  groupName = null,
+  smtpTo = null
+) {
   const db = getDB();
 
   // Validate interval
@@ -202,14 +217,14 @@ export function addMonitor(type, url, interval, retries = null, name = null, web
     }
   }
   const stmt = db.prepare(
-    'INSERT INTO monitors (type, url, interval, retries, name, webhook_url, group_name) VALUES (?, ?, ?, ?, ?, ?, ?)'
+    'INSERT INTO monitors (type, url, interval, retries, name, webhook_url, smtp_to, group_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
   );
-  return stmt.run(type, url, interval, retries, name, webhookUrl, groupName);
+  return stmt.run(type, url, interval, retries, name, webhookUrl, smtpTo, groupName);
 }
 
 export function updateMonitor(id, updates) {
   const db = getDB();
-  const { name, url, type, interval, retries, webhook_url, group_name } = updates;
+  const { name, url, type, interval, retries, webhook_url, group_name, smtp_to } = updates;
 
   if (interval !== undefined && (interval < 1 || !Number.isInteger(interval))) {
     throw new Error('Interval must be a positive integer (minimum 1 second).');
@@ -252,6 +267,10 @@ export function updateMonitor(id, updates) {
   if (webhook_url !== undefined) {
     fields.push('webhook_url = ?');
     values.push(webhook_url);
+  }
+  if (smtp_to !== undefined) {
+    fields.push('smtp_to = ?');
+    values.push(smtp_to);
   }
   if (group_name !== undefined) {
     fields.push('group_name = ?');
@@ -388,6 +407,8 @@ export function getStats() {
       interval: row.interval,
       retries: row.retries,
       groupName: row.group_name,
+      webhookUrl: row.webhook_url,
+      smtpTo: row.smtp_to,
       uptime: uptime,
       lastDowntime: lastDowntimeText,
       status: row.current_status || 'unknown',
@@ -420,6 +441,63 @@ export function setNotificationSettings(enabled) {
     console.error('Failed to set notification settings:', err);
     return false;
   }
+}
+
+const SMTP_KEYS = ['smtp_host', 'smtp_port', 'smtp_user', 'smtp_pass', 'smtp_from', 'smtp_to'];
+
+export function getSmtpSettings() {
+  const db = getDB();
+  try {
+    const rows = db.prepare("SELECT key, value FROM settings WHERE key LIKE 'smtp_%'").all();
+    const settings = {};
+    for (const row of rows) {
+      settings[row.key.replace('smtp_', '')] = row.value;
+    }
+    if (!settings.host || !settings.port || !settings.user || !settings.pass) {
+      return null;
+    }
+    return settings;
+  } catch (err) {
+    console.error('Failed to get SMTP settings:', err);
+    return null;
+  }
+}
+
+export function setSmtpSettings(config) {
+  const db = getDB();
+  try {
+    const stmt = db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)');
+    stmt.run('smtp_host', config.host);
+    stmt.run('smtp_port', String(config.port));
+    stmt.run('smtp_user', config.user);
+    stmt.run('smtp_pass', config.pass);
+    stmt.run('smtp_from', config.from || config.user);
+    if (config.to) {
+      stmt.run('smtp_to', config.to);
+    } else {
+      db.prepare("DELETE FROM settings WHERE key = 'smtp_to'").run();
+    }
+    return true;
+  } catch (err) {
+    console.error('Failed to set SMTP settings:', err);
+    return false;
+  }
+}
+
+export function clearSmtpSettings() {
+  const db = getDB();
+  try {
+    const placeholders = SMTP_KEYS.map(() => '?').join(', ');
+    db.prepare(`DELETE FROM settings WHERE key IN (${placeholders})`).run(...SMTP_KEYS);
+    return true;
+  } catch (err) {
+    console.error('Failed to clear SMTP settings:', err);
+    return false;
+  }
+}
+
+export function isSmtpConfigured() {
+  return getSmtpSettings() !== null;
 }
 
 // SSL Certificate functions

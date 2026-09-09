@@ -10,6 +10,7 @@ const MonitorSchema = z.object({
   retries: z.number().int().min(0).positive().optional(),
   name: z.string().optional(),
   webhook_url: z.string().nullable().optional(),
+  smtp_to: z.string().nullable().optional(),
   group_name: z.string().nullable().optional()
 });
 
@@ -23,6 +24,10 @@ export function registerEditCommand(program) {
     .option('-r, --retries <number>', 'Check retries before notifications are send', '0')
     .option('-n, --name <name>', 'New name')
     .option('-w, --webhook <url>', 'New webhook URL')
+    .option(
+      '-s, --smtp-to <recipients>',
+      'Email recipient(s) for SMTP notifications (comma-separated, use "none" to remove)'
+    )
     .option('-g, --group <group>', 'New group name (use "none" to remove from group)')
     .action(async (idOrName, options) => {
       try {
@@ -43,6 +48,9 @@ export function registerEditCommand(program) {
         if (options.retries) updates.retries = parseInt(options.retries, 10);
         if (options.name) updates.name = options.name;
         if (options.webhook) updates.webhook_url = options.webhook;
+        if (options.smtpTo !== undefined) {
+          updates.smtp_to = options.smtpTo.toLowerCase() === 'none' ? null : options.smtpTo;
+        }
         if (options.group !== undefined) {
           updates.group_name = options.group.toLowerCase() === 'none' ? null : options.group;
         }
@@ -77,6 +85,12 @@ export function registerEditCommand(program) {
           const newWebhook = await question(`Webhook URL [${currentWebhook}]: `);
           if (newWebhook.trim()) {
             updates.webhook_url = newWebhook.trim() === 'none' ? null : newWebhook.trim();
+          }
+
+          const currentSmtpTo = monitor.smtp_to || 'none';
+          const newSmtpTo = await question(`SMTP Recipients (comma-separated) [${currentSmtpTo}]: `);
+          if (newSmtpTo.trim()) {
+            updates.smtp_to = newSmtpTo.trim().toLowerCase() === 'none' ? null : newSmtpTo.trim();
           }
 
           const currentGroup = monitor.group_name || 'none';

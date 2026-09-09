@@ -50,6 +50,7 @@ upkit status -g dev
 - **Monitor Grouping** - Organize monitors as you like
 - **Desktop Notifications** - Get notified when monitors go down or certificates expire
 - **Webhook Alerts** - Send status updates to custom webhook URLs
+- **Email (SMTP) Alerts** - Send status updates to email recipients
 - **Rich Metrics** - Latency sparklines, P95, status history timeline
 - **Lightweight** - Minimal resource usage with SQLite storage
 
@@ -113,6 +114,12 @@ upkit notif disable      # alias
 
 uptimekit notif status   # Check notification status
 upkit notif status       # alias
+
+uptimekit notif smtp --host smtp.gmail.com --port 587 --user you@gmail.com --pass <app-password>
+                         # Configure SMTP (interactive if no flags given)
+uptimekit notif smtp status    # Show SMTP config (password masked)
+uptimekit notif smtp test      # Send a test email
+uptimekit notif smtp clear     # Remove SMTP config
 ```
 
 ### Options for `add` and `edit`
@@ -122,6 +129,7 @@ upkit notif status       # alias
 - `-n, --name` - Custom name
 - `-u, --url` - URL/Host (for `edit` command)
 - `-w, --webhook` - Webhook URL to receive status updates
+- `-s, --smtp-to` - Email recipient(s) for this monitor (comma-separated; use `none` to remove)
 - `-g, --group` - Group name (use `none` to remove from group)
 
 ### Options for `status`
@@ -231,6 +239,49 @@ upkit edit 1 -w https://yourwebhookurl.com/
 # Remove webhook
 upkit edit 1 -w none
 ```
+
+## Email (SMTP) Notifications
+
+Configure SMTP connection details once, then assign recipients per monitor. SMTP must be configured globally before email alerts can be sent.
+
+### Setup
+
+```bash
+# Interactive configuration
+upkit notif smtp
+
+# Or with flags (Gmail example)
+upkit notif smtp --host smtp.gmail.com --port 587 --user you@gmail.com --pass "<app password>"
+
+# Default recipients used when a monitor has no per-monitor recipients
+upkit notif smtp --host smtp.gmail.com --port 587 --user you@gmail.com --pass "<app password>" --to ops@example.com
+
+# Verify delivery
+upkit notif smtp test
+
+# Show current config (password masked) / remove config
+upkit notif smtp status
+upkit notif smtp clear
+```
+
+> **Tip**: For Gmail, create an [App Password](https://support.google.com/accounts/answer/185833) instead of using your account password.
+
+### Per-Monitor Recipients
+
+Assign recipients per monitor with `--smtp-to` on `add` or `edit`. Each monitor can notify different people.
+
+```bash
+# Add a monitor that emails the ops team
+upkit add https://mysite.com -t http -n "Prod" -s "ops@example.com,oncall@example.com"
+
+# Change recipients on an existing monitor
+upkit edit 1 -s "alerts@example.com"
+
+# Remove per-monitor recipients (falls back to the global `--to`)
+upkit edit 1 -s none
+```
+
+If a monitor has no `smtp_to`, emails go to the global recipients configured in `upkit notif smtp`. With no recipients configured at all, email alerts are skipped.
 
 ## Examples
 
