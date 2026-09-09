@@ -10,8 +10,7 @@
 
 </div>
 
-![UptimeKit preview](./preview.png)
----
+## ![UptimeKit preview](./preview.png)
 
 ## Installation
 
@@ -57,6 +56,7 @@ upkit status -g dev
 ## Commands
 
 ### Daemon
+
 ```bash
 uptimekit start          # Start monitoring daemon
 upkit start              # alias
@@ -66,6 +66,7 @@ upkit stop               # alias
 ```
 
 ### Monitors
+
 ```bash
 uptimekit add <url> -t <type> -i <interval> -n <name>
 upkit add <url> -t <type> -i <interval> -n <name>    # alias
@@ -90,6 +91,7 @@ upkit reset              # alias
 ```
 
 ### Groups
+
 ```bash
 uptimekit group          # List all groups
 upkit grp                # alias
@@ -105,6 +107,7 @@ upkit grp delete <name> --with-monitors    # Delete group and its monitors
 ```
 
 ### Notifications
+
 ```bash
 uptimekit notif enable   # Enable desktop notifications
 upkit notif enable       # alias
@@ -124,13 +127,14 @@ uptimekit notif smtp clear     # Remove SMTP config
 
 ### Options for `add` and `edit`
 
-- `-t, --type` - Monitor type: `http`, `icmp`, `dns`, `ssl`
+- `-t, --type` - Monitor type: `http`, `icmp`, `dns`, `ssl`, `graphql`
 - `-i, --interval` - Check interval in seconds (default: 60)
 - `-n, --name` - Custom name
 - `-u, --url` - URL/Host (for `edit` command)
 - `-w, --webhook` - Webhook URL to receive status updates
 - `-s, --smtp-to` - Email recipient(s) for this monitor (comma-separated; use `none` to remove)
 - `-g, --group` - Group name (use `none` to remove from group)
+- `-q, --query` - GraphQL query for health check (`graphql` type only; defaults to `{ __typename }`; use `none` to reset)
 
 ### Options for `status`
 
@@ -139,23 +143,37 @@ uptimekit notif smtp clear     # Remove SMTP config
 ## Monitor Types
 
 **HTTP/HTTPS** - Website availability
+
 ```bash
 upkit add https://example.com -t http -i 30
 ```
 
 **ICMP Ping** - Server reachability
+
 ```bash
 upkit add 8.8.8.8 -t icmp -i 10
 ```
 
 **DNS** - Domain resolution
+
 ```bash
 upkit add google.com -t dns -i 60
 ```
 
 **SSL Certificate** - Certificate expiration monitoring
+
 ```bash
 upkit add example.com -t ssl -i 3600 -n "Example SSL"
+```
+
+**GraphQL** - GraphQL endpoint health check (sends a query via POST and verifies a valid GraphQL response)
+
+```bash
+# Default health check ({ __typename })
+upkit add https://api.example.com/graphql -t graphql -i 60
+
+# Custom query
+upkit add https://api.example.com/graphql -t graphql -i 60 -q "{ users { id } }"
 ```
 
 ## Monitor Grouping
@@ -215,7 +233,7 @@ When a monitor's status changes, UptimeKit sends a POST request with the followi
 
 ```json
 {
-  "event": "monitor_up" ,
+  "event": "monitor_up",
   "monitor": {
     "name": "My Website",
     "url": "https://example.com",
@@ -365,12 +383,10 @@ For SSL monitors, the detail view shows:
 - Days remaining until expiration
 - Serial number and fingerprint
 
-
 ## Requirements
 
 - Node.js 16+
 - Linux, macOS, or Windows
-
 
 ## Documentation
 
@@ -388,8 +404,4 @@ Copyright (c) 2025 [abhixdd](https://github.com/abhixdd)
 
 ---
 
-
-
 ⭐ [Star on GitHub](https://github.com/abhixdd/UptimeKit-CLI) • 🐛 [Report Bug](https://github.com/abhixdd/UptimeKit-CLI/issues) • 💡 [Request Feature](https://github.com/abhixdd/UptimeKit-CLI/issues)
-
-

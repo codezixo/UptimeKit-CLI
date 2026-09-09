@@ -5,13 +5,14 @@ import readline from 'readline';
 
 const MonitorSchema = z.object({
   url: z.string().min(1).optional(),
-  type: z.enum(['http', 'icmp', 'dns', 'ssl']).optional(),
+  type: z.enum(['http', 'icmp', 'dns', 'ssl', 'graphql']).optional(),
   interval: z.number().int().min(1).positive().optional(),
   retries: z.number().int().min(0).positive().optional(),
   name: z.string().optional(),
   webhook_url: z.string().nullable().optional(),
   smtp_to: z.string().nullable().optional(),
-  group_name: z.string().nullable().optional()
+  group_name: z.string().nullable().optional(),
+  check_config: z.string().nullable().optional()
 });
 
 export function registerEditCommand(program) {
@@ -19,7 +20,7 @@ export function registerEditCommand(program) {
     .command('edit <idOrName>')
     .description('Edit an existing monitor')
     .option('-u, --url <url>', 'New URL')
-    .option('-t, --type <type>', 'New type (http, icmp, dns, ssl)')
+    .option('-t, --type <type>', 'New type (http, icmp, dns, ssl, graphql)')
     .option('-i, --interval <seconds>', 'New interval in seconds')
     .option('-r, --retries <number>', 'Check retries before notifications are send', '0')
     .option('-n, --name <name>', 'New name')
@@ -29,6 +30,7 @@ export function registerEditCommand(program) {
       'Email recipient(s) for SMTP notifications (comma-separated, use "none" to remove)'
     )
     .option('-g, --group <group>', 'New group name (use "none" to remove from group)')
+    .option('-q, --query <query>', 'New GraphQL query (graphql type only)')
     .action(async (idOrName, options) => {
       try {
         await initDB();
@@ -53,6 +55,16 @@ export function registerEditCommand(program) {
         }
         if (options.group !== undefined) {
           updates.group_name = options.group.toLowerCase() === 'none' ? null : options.group;
+        }
+        if (options.query !== undefined) {
+          const query = options.query.trim();
+          const currentConfig = monitor.check_config ? JSON.parse(monitor.check_config) : {};
+          if (query.toLowerCase() === 'none') {
+            delete currentConfig.query;
+            updates.check_config = Object.keys(currentConfig).length ? JSON.stringify(currentConfig) : null;
+          } else {
+            updates.check_config = JSON.stringify({ ...currentConfig, query });
+          }
         }
 
         // If no flags provided, go interactive
@@ -99,6 +111,18 @@ export function registerEditCommand(program) {
             updates.group_name = newGroup.trim().toLowerCase() === 'none' ? null : newGroup.trim();
           }
 
+          const currentQuery = monitor.check_config ? JSON.parse(monitor.check_config).query || 'none' : 'none';
+          const newQuery = await question(`GraphQL Query (graphql type only) [${currentQuery}]: `);
+          if (newQuery.trim()) {
+            const currentConfig = monitor.check_config ? JSON.parse(monitor.check_config) : {};
+            if (newQuery.trim().toLowerCase() === 'none') {
+              delete currentConfig.query;
+              updates.check_config = Object.keys(currentConfig).length ? JSON.stringify(currentConfig) : null;
+            } else {
+              updates.check_config = JSON.stringify({ ...currentConfig, query: newQuery.trim() });
+            }
+          }
+
           rl.close();
         }
 
@@ -114,7 +138,7 @@ export function registerEditCommand(program) {
         const finalType = data.type || monitor.type;
         const finalUrl = data.url || monitor.url;
 
-        if (finalType === 'http') {
+        if (finalType === 'http' || finalType === 'graphql') {
           try {
             const u = new URL(finalUrl);
             if (u.protocol !== 'http:' && u.protocol !== 'https:') {
@@ -148,6 +172,12 @@ export function registerEditCommand(program) {
             console.error(chalk.red(`Error: Invalid hostname or IP '${finalUrl}' for ${finalType} monitor.`));
             return;
           }
+        }
+
+        // Ensure GraphQL monitors have a query (default to __typename health check)
+        if (finalType === 'graphql' && !data.check_config) {
+          const currentConfig = monitor.check_config ? JSON.parse(monitor.check_config) : {};
+          data.check_config = JSON.stringify({ ...currentConfig, query: currentConfig.query || '{ __typename }' });
         }
 
         updateMonitor(monitor.id, data);

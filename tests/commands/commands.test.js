@@ -563,7 +563,7 @@ describe('Monitor Validation', () => {
 });
 
 describe('Monitor Type Schema', () => {
-  const allowedTypes = ['http', 'icmp', 'dns', 'ssl'];
+  const allowedTypes = ['http', 'icmp', 'dns', 'ssl', 'graphql'];
 
   it('should accept http type', () => {
     expect(allowedTypes.includes('http')).toBe(true);
@@ -579,6 +579,10 @@ describe('Monitor Type Schema', () => {
 
   it('should accept ssl type', () => {
     expect(allowedTypes.includes('ssl')).toBe(true);
+  });
+
+  it('should accept graphql type', () => {
+    expect(allowedTypes.includes('graphql')).toBe(true);
   });
 
   it('should reject invalid types', () => {
@@ -754,10 +758,14 @@ describe('Edit Command Validation', () => {
   });
 
   describe('Type change validation', () => {
-    const allowedTypes = ['http', 'icmp', 'dns'];
+    const allowedTypes = ['http', 'icmp', 'dns', 'graphql'];
 
     it('should allow type change to valid type', () => {
       expect(allowedTypes.includes('icmp')).toBe(true);
+    });
+
+    it('should allow type change to graphql', () => {
+      expect(allowedTypes.includes('graphql')).toBe(true);
     });
 
     it('should reject invalid type change', () => {

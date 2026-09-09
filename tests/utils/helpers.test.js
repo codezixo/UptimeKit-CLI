@@ -136,7 +136,7 @@ describe('URL Display Helpers', () => {
 });
 
 describe('Monitor Type Validation', () => {
-  const allowedTypes = ['http', 'icmp', 'dns', 'ssl'];
+  const allowedTypes = ['http', 'icmp', 'dns', 'ssl', 'graphql'];
 
   function isValidType(type) {
     return allowedTypes.includes(type);
@@ -147,6 +147,7 @@ describe('Monitor Type Validation', () => {
     expect(isValidType('icmp')).toBe(true);
     expect(isValidType('dns')).toBe(true);
     expect(isValidType('ssl')).toBe(true);
+    expect(isValidType('graphql')).toBe(true);
   });
 
   it('rejects invalid monitor types', () => {

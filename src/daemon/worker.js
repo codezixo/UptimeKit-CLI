@@ -68,6 +68,55 @@ async function checkSSLCertificate(hostname, port = 443) {
   });
 }
 
+async function checkGraphQL(url, checkConfig = null) {
+  let query = '{ __typename }';
+  if (checkConfig) {
+    try {
+      const config = JSON.parse(checkConfig);
+      if (config.query && typeof config.query === 'string') {
+        query = config.query;
+      }
+    } catch (e) {
+      // ignore malformed config, fall back to default query
+    }
+  }
+
+  const res = await axios.post(
+    url,
+    { query },
+    {
+      timeout: 5000,
+      validateStatus: () => true,
+      headers: { 'Content-Type': 'application/json' }
+    }
+  );
+
+  let body;
+  try {
+    body = res.data;
+  } catch (e) {
+    throw new Error('Invalid response body');
+  }
+
+  if (res.status < 200 || res.status >= 300) {
+    throw new Error(`HTTP ${res.status}`);
+  }
+
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    throw new Error('Invalid GraphQL response');
+  }
+
+  if (body.errors && body.errors.length > 0) {
+    throw new Error('GraphQL query returned errors');
+  }
+
+  if (body.data === undefined) {
+    throw new Error('GraphQL response missing data');
+  }
+
+  return res.data;
+}
+
 async function checkMonitor(monitor) {
   const start = Date.now();
   let status = 'down';
@@ -84,6 +133,10 @@ async function checkMonitor(monitor) {
         status = 'up';
       }
       monitor._lastHttpCode = res.status;
+      latency = Date.now() - start;
+    } else if (monitor.type === 'graphql') {
+      await checkGraphQL(monitor.url, monitor.check_config);
+      status = 'up';
       latency = Date.now() - start;
     } else if (monitor.type === 'icmp') {
       const isWindows = process.platform === 'win32';
@@ -241,12 +294,13 @@ function monitorChanged(a, b) {
     a.name !== b.name ||
     a.webhook_url !== b.webhook_url ||
     a.smtp_to !== b.smtp_to ||
-    a.group_name !== b.group_name
+    a.group_name !== b.group_name ||
+    a.check_config !== b.check_config
   );
 }
 
 function changedFields(a, b) {
-  return ['interval', 'url', 'type', 'retries', 'name', 'webhook_url', 'smtp_to', 'group_name'].filter(
+  return ['interval', 'url', 'type', 'retries', 'name', 'webhook_url', 'smtp_to', 'group_name', 'check_config'].filter(
     k => a[k] !== b[k]
   );
 }

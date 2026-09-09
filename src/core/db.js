@@ -30,6 +30,7 @@ export async function initDB() {
       webhook_url TEXT,
       smtp_to TEXT,
       group_name TEXT,
+      check_config TEXT,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -84,6 +85,10 @@ export async function initDB() {
 
     if (!monitorCols.some(c => c.name === 'smtp_to')) {
       db.prepare('ALTER TABLE monitors ADD COLUMN smtp_to TEXT').run();
+    }
+
+    if (!monitorCols.some(c => c.name === 'check_config')) {
+      db.prepare('ALTER TABLE monitors ADD COLUMN check_config TEXT').run();
     }
 
     const heartbeatCols = db.prepare("PRAGMA table_info('heartbeats')").all();
@@ -154,6 +159,7 @@ export function resetDB() {
       webhook_url TEXT,
       smtp_to TEXT,
       group_name TEXT,
+      check_config TEXT,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -196,7 +202,8 @@ export function addMonitor(
   name = null,
   webhookUrl = null,
   groupName = null,
-  smtpTo = null
+  smtpTo = null,
+  checkConfig = null
 ) {
   const db = getDB();
 
@@ -217,14 +224,14 @@ export function addMonitor(
     }
   }
   const stmt = db.prepare(
-    'INSERT INTO monitors (type, url, interval, retries, name, webhook_url, smtp_to, group_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+    'INSERT INTO monitors (type, url, interval, retries, name, webhook_url, smtp_to, group_name, check_config) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
   );
-  return stmt.run(type, url, interval, retries, name, webhookUrl, smtpTo, groupName);
+  return stmt.run(type, url, interval, retries, name, webhookUrl, smtpTo, groupName, checkConfig);
 }
 
 export function updateMonitor(id, updates) {
   const db = getDB();
-  const { name, url, type, interval, retries, webhook_url, group_name, smtp_to } = updates;
+  const { name, url, type, interval, retries, webhook_url, group_name, smtp_to, check_config } = updates;
 
   if (interval !== undefined && (interval < 1 || !Number.isInteger(interval))) {
     throw new Error('Interval must be a positive integer (minimum 1 second).');
@@ -275,6 +282,11 @@ export function updateMonitor(id, updates) {
   if (group_name !== undefined) {
     fields.push('group_name = ?');
     values.push(group_name);
+  }
+
+  if (check_config !== undefined) {
+    fields.push('check_config = ?');
+    values.push(check_config);
   }
 
   if (fields.length === 0) return;
@@ -409,6 +421,7 @@ export function getStats() {
       groupName: row.group_name,
       webhookUrl: row.webhook_url,
       smtpTo: row.smtp_to,
+      checkConfig: row.check_config,
       uptime: uptime,
       lastDowntime: lastDowntimeText,
       status: row.current_status || 'unknown',
