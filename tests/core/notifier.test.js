@@ -17,13 +17,16 @@ jest.unstable_mockModule('axios', () => ({
   }
 }));
 
-jest.unstable_mockModule('nodemailer', () => ({
-  default: {
-    createTransport: jest.fn(() => ({
-      sendMail: jest.fn().mockResolvedValue({ accepted: ['alice@example.com'] })
-    }))
-  }
-}));
+jest.unstable_mockModule('nodemailer', () => {
+  const transport = {
+    sendMail: jest.fn().mockResolvedValue({ accepted: ['alice@example.com'] })
+  };
+  return {
+    default: {
+      createTransport: jest.fn(() => transport)
+    }
+  };
+});
 
 jest.unstable_mockModule('../../src/core/db.js', () => ({
   getSmtpSettings: jest.fn()

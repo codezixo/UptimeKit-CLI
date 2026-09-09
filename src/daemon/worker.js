@@ -220,6 +220,19 @@ function startMonitorLoop(monitor, initialStatus = null) {
   });
 }
 
+function monitorChanged(a, b) {
+  return (
+    a.interval !== b.interval ||
+    a.url !== b.url ||
+    a.type !== b.type ||
+    a.retries !== b.retries ||
+    a.name !== b.name ||
+    a.webhook_url !== b.webhook_url ||
+    a.smtp_to !== b.smtp_to ||
+    a.group_name !== b.group_name
+  );
+}
+
 async function refreshMonitors() {
   try {
     const monitors = getMonitors();
@@ -239,11 +252,7 @@ async function refreshMonitors() {
         startMonitorLoop(monitor);
       } else {
         const current = activeMonitors.get(monitor.id);
-        if (
-          current.monitor.interval !== monitor.interval ||
-          current.monitor.url !== monitor.url ||
-          current.monitor.type !== monitor.type
-        ) {
+        if (monitorChanged(current.monitor, monitor)) {
           clearInterval(current.intervalId);
           startMonitorLoop(monitor, current.lastStatus);
         }
